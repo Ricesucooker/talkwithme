@@ -1,0 +1,10 @@
+Requirments: 
+
+SpeechReconition
+pydub
+
+May need:
+pyauido
+
+
+pyinstaller
