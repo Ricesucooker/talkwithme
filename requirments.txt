@@ -8,3 +8,8 @@ pyauido
 
 
 pyinstaller
+
+
+#voice recording 
+sounddevice  - play and record auido 
+wavio
