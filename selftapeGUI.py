@@ -1,18 +1,20 @@
-import sys 
+import sys
 import os
 import time
 import threading
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
 from audio_manager import audioManager
-
+import re
+ 
 class SelfTapeApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("🎙️TalkWithMe app")
         self.geometry("800x600")
         self.config(bg="#f0f0f0")
-
+        
+        # Logic
         self.audio_manager = None
         try:
             self.audio_manager = audioManager()
@@ -20,97 +22,113 @@ class SelfTapeApp(tk.Tk):
             messagebox.showerror("Error", str(e))
             self.destroy()
             return
+
         self.is_running = False
         self.audition_thread = None
-
-        self.recorded_take = []
-        self.full_script_line = []
-        self.my_character = None
+        self.recorded_takes = []
+        self.script_lines = []
+        self.character_roles = []
+        self.my_character = ""
 
         self.create_widgets()
 
-    #building gui layout
+    # Building GUI Layout 
     def create_widgets(self):
         main_frame = tk.Frame(self, bg="#f0f0f0", padx=10, pady=10)
-        main_frame.pack(fill="both", expand=True)
-
-        script_frame = tk.LabelFrame(main_frame, text="Eneter Script", bg="white", padx=10, pady=10)
-        script_frame.pack(fill="both", expand=True, pady=10)
-
-        self.script_text = scrolledtext.ScrolledText(script_frame, wrap=tk.WORD, width=60, height=15, font=("helvetico",12))
-        self.script_text.pack(fill="both", expand=True, pady=10)
-        self.script_text.insert(tk.END, """Sophie: Honestly, what a mess this place is. One would think a powerful wizard could keep things tidy.
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Script Area 
+        tk.Label(main_frame, text="Enter your script here:").pack(pady=(0,5))
+        self.script_text = scrolledtext.ScrolledText(main_frame, wrap=tk.WORD, height=25, width=100)
+        self.script_text.pack(pady=5)
+        self.script_text.bind("<<Modified>>", self.update_character_list)
+        self.script_text.insert(tk.END, """
+                                Sophie: Honestly, what a mess this place is. One would think a powerful wizard could keep things tidy.
                                 Howl: Tidy? My dear, a chaotic artist needs chaos to create! Besides, what would I do without my dear, sweet cleaning lady to take care of everything?
                                 Sophie: Sweet indeed. He's as flighty as a butterfly and twice as vain.
-                                Howl: But you, my dear seem so weary.Are you sure you're up to this? You're not some ancient crone, are you? """) 
-        
-
-        controls_frame = tk.Frame(main_frame, bg="#f0f0f0")
-        controls_frame.pack(fill="x", pady=10)
-        
-        # Character selection
-        tk.Label(controls_frame, text="Your Character:", bg="#f0f0f0", font=("Helvetica", 12, "bold")).pack(side="left", padx=(0, 5))
-        self.character_var = tk.StringVar()
-        self.character_dropdown = ttk.Combobox(controls_frame, textvariable=self.character_var, state="readonly")
-        self.character_dropdown.pack(side="left", padx=(0, 20))
-        
-        # Buttons
-        self.start_button = tk.Button(controls_frame, text="Start Audition", command=self.start_audition, bg="#28a745", fg="white", font=("Helvetica", 12, "bold"), relief="raised")
-        self.start_button.pack(side="left", padx=5, ipadx=10, ipady=5)
-        
-        self.playback_button = tk.Button(controls_frame, text="Playback Take", command=self.play_full_take, state="disabled", bg="#007bff", fg="white", font=("Helvetica", 12, "bold"), relief="raised")
-        self.playback_button.pack(side="left", padx=5, ipadx=10, ipady=5)
-        
-        self.quit_button = tk.Button(controls_frame, text="Quit", command=self.on_quit, bg="#dc3545", fg="white", font=("Helvetica", 12, "bold"), relief="raised")
-        self.quit_button.pack(side="left", padx=5, ipadx=10, ipady=5)
-        
-        #  Status Display
-        self.status_label = tk.Label(main_frame, text="Ready.", font=("Helvetica", 14), bg="#f0f0f0", relief="sunken", anchor="w")
-        self.status_label.pack(fill="x", pady=10, ipady=5)
-        
-        self.update_character_list()
-        self.script_text.bind("<<Modified>>", self.on_script_modified)
-
-    def on_script_modified(self, event=None):
-        self.update_character_list()
+                                Howl: But you, my dear seem so weary.Are you sure you're up to this? You're not some ancient crone, are you? 
+                                """)
         self.script_text.edit_modified(False)
-    
-    def update_character_list(self):
-        script_text = self.script_text.get("1.0", tk.END)
-        parsed_script = self.parse_script(script_text)
-        characters = sorted(list(set(line[0] for line in parsed_script)))
-        self.character_dropdown['values'] = characters
-        if self.character_var.get() not in characters:
-            self.character_var.set(characters[0] if characters else "")
-    
-    def parse_script(self, script_text):
-        lines = script_text.strip().split('\n')
-        parsed_line = []
-        for line in lines:
-            if ':' in line:
-                parts = line.split(':', 1)
-                character = parts[0].strip().upper()
-                dialogue = parts[1].strip()
-                parsed_line.append((character, dialogue))
-        return parsed_line
-    
-    def start_audition(self):
-        if self.is_running:
-            return
-        self.my_character = self.character_var.get()
-        if not self.my_character:
-            messagebox.showwarning("Warning","Please Select a character.")
-            return
-        self.is_running = True
-        self.start_button.config(state="disabled")
-        self.playback_button.config(state="disabled")
-        self.script_text.config(state="disabled")
-        self.character_dropdown.config(state="disabled")
-        self.status_label.config(text="In progress....")
 
-        self.recorded_take = []
-        script_text = self.script_text.get("1.0", tk.END)
-        self.full_script_line = self.parse_script(script_text)
+        # Buttons and Options
+        control_frame = tk.Frame(main_frame)
+        control_frame.pack(pady=10)
+
+        tk.Label(control_frame, text="Your Character:").pack(side=tk.LEFT, padx=(0,5))
+        self.character_var = tk.StringVar(control_frame)
+        self.character_dropdown = ttk.Combobox(control_frame, textvariable=self.character_var, state="readonly")
+        self.character_dropdown.pack(side=tk.LEFT, padx=(0,20))
+
+        self.start_button = tk.Button(control_frame, text="Start Audition 🎬", command=self.start_audition, bg="#28a745", fg="white", font=("Helvetica", 12, "bold"))
+        self.start_button.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.playback_button = tk.Button(control_frame, text="Playback Take", command=self.play_full_take, state="disabled", bg="#007bff", fg="white", font=("Helvetica", 12, "bold"))
+        self.playback_button.pack(side=tk.LEFT, padx=(5,5))
+
+        self.stop_button = tk.Button(control_frame, text="Stop", command=self.stop_audition, state=tk.DISABLED, bg="#dc3545", fg="white", font=("Helvetica", 12, "bold"))
+        self.stop_button.pack(side=tk.LEFT, padx=(5,0))
+
+        # Status 
+        self.status_label = tk.Label(main_frame, text="Ready to begin.", bd=1, relief=tk.SUNKEN, anchor=tk.W)
+        self.status_label.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
+    
+        self.update_character_list()
+    
+    # Character Parsing
+    def update_character_list(self, event=None):
+        script_content = self.script_text.get("1.0", tk.END)
+ 
+        characters = re.findall(r'^\s*([A-Z][a-zA-Z\s\.]*):\s*', script_content, re.MULTILINE)
+
+        if characters:
+            unique_characters = sorted(list(set(c.strip() for c in characters)))
+            self.character_roles = unique_characters
+            self.character_dropdown['values'] = unique_characters
+            if self.character_var.get() not in unique_characters:
+                self.character_var.set(unique_characters[0])
+        else:
+            self.character_roles = []
+            self.character_dropdown['values'] = []
+            self.character_var.set("No characters found.")
+
+        self.script_text.edit_modified(False)
+
+    def parse_script(self, script_content):
+        lines = script_content.strip().split('\n')
+        parsed_script = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            match = re.match(r'\s*([A-Z][a-zA-Z\s\.]*):\s*(.*)', line)
+            if match:
+                character = match.group(1).strip()
+                dialogue = match.group(2).strip()
+                if dialogue:
+                    parsed_script.append((character, dialogue))
+        return parsed_script
+
+    # Main Audition Logic
+    def start_audition(self):
+        script_content = self.script_text.get("1.0", tk.END)
+        if not script_content.strip():
+            self.update_status("Please enter a script.")
+            return
+        
+        self.my_character = self.character_var.get()
+        if self.my_character not in self.character_roles:
+            self.update_status("Please select a valid character.")
+            return
+
+        self.script_lines = self.parse_script(script_content)
+        self.is_running = True
+        self.start_button.config(state=tk.DISABLED)
+        self.stop_button.config(state=tk.NORMAL)
+        self.playback_button.config(state=tk.DISABLED)
+        self.script_text.config(state=tk.DISABLED)
+        self.character_dropdown.config(state=tk.DISABLED)
+        
+        self.update_status("Audition started ...")
 
         self.audition_thread = threading.Thread(target=self._run_audition)
         self.audition_thread.daemon = True
@@ -118,50 +136,70 @@ class SelfTapeApp(tk.Tk):
 
     def _run_audition(self):
         try:
-            self.status_label.config(text="Starting...")
-            time.sleep(1)
+            take_number = 1 
+            self.recorded_takes = []
             self.audio_manager.is_running = True
 
-            for character, line in self.script:
+            for character, line in self.script_lines:
                 if not self.is_running:
                     break
-
+                
                 if character == self.my_character:
-                    self.status_label.config(text=f"YOUR LINE: {line}")
-                    filename = f"take_{i+1}.wav"
-                    self.audio_manager.record_audio_until_silence(filename)
-                    self.recorded_take.append(filename)
-                else:
-                    self.status_label.config(text=f"{character} : {line}")
-                    self.audio_manager.speak(line)
-            self.status_label.config(text= "Audition finished. You can now play back your take! 📹")
-            self.playback_button.config(state="normal")
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred during recording: {e}")
-        finally:
-            self.is_running =False
-            self.start_button.config(state="normal")
-            self.script_text.config(state="normal")
-            self.character_dropdown.config(state="readonly")
-            self.audio_manager.is_running = False
-        
-    def play_full_take(self):
-        if self.is_running or not self.recorded_take:
-            return
-        self.status_label.config(text="PLaying back full take ...")
+                    self.update_status(f"YOUR LINE: {line}")
+                    filename = f"take_{take_number}.wav"
+                    recorded_file = self.audio_manager.record_audio_until_silence(filename)
 
-        take_idex = 0
-        for character, line in self.full_script_line:
-            if character == self.my_character:
-                if take_idex < len(self.recorded_take):
-                    filename = self.recorded_take[take_idex]
-                    self.audio_manager.play_audio_file(filename)
-                    take_idex +=1
+                    if os.path.exists(recorded_file) and os.path.getsize(recorded_file) > 1000:
+                        self.recorded_takes.append(recorded_file)
+                        take_number += 1
+                    else:
+                        self.update_status("Recording failed or was too short. Skipping.")
                 else:
-                    self.audio_manager.speak("take missing from this line")
+                    self.update_status(f"{character}: {line}")
+                    self.audio_manager.speak(line)
+            
+            if self.is_running:
+                self.update_status("Audition finished. You can now play back your take.")
+                self.playback_button.config(state=tk.NORMAL)
+        except Exception as e:
+            self.update_status(f"An error occurred: {e}")
+            messagebox.showerror("Error", f'An error occurred during audition: {e}')
+        finally:
+            self.stop_audition_cleanup()
+    
+    def play_full_take(self):
+        """Plays back the full take, interleaving recorded audio with TTS."""
+        if self.is_running or not self.recorded_takes:
+            return
+        
+        self.update_status("Playing back full take...")
+        
+        take_index = 0
+        for character, line in self.script_lines:
+            if character == self.my_character:
+                if take_index < len(self.recorded_takes):
+                    filename = self.recorded_takes[take_index]
+                    self.audio_manager.play_audio_file(filename)
+                    take_index += 1
             else:
                 self.audio_manager.speak(line)
-        self.status_label.config(text="Playback finnished.")
+        
+        self.update_status("Playback finished.")
+
+    def stop_audition(self):
+        self.is_running = False
+        self.update_status("Audition stopped.")
+
+    def stop_audition_cleanup(self):
+        self.is_running = False
+        self.audio_manager.is_running = False
+        self.start_button.config(state=tk.NORMAL)
+        self.stop_button.config(state=tk.DISABLED)
+        self.script_text.config(state=tk.NORMAL)
+        self.character_dropdown.config(state="readonly")
+        
+    def update_status(self, message):
+        self.after(0, lambda: self.status_label.config(text=message))
     
     def on_quit(self):
         self.is_running = False
